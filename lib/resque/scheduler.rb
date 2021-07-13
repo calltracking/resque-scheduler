@@ -59,7 +59,7 @@ module Resque
             rescue Errno::EAGAIN, Errno::ECONNRESET, Redis::CannotConnectError => e
               log! e.message
             end
-            poll_sleep
+            #poll_sleep
           end
 
         rescue Interrupt
@@ -74,8 +74,11 @@ module Resque
         timestamp = Resque.next_delayed_timestamp(at_time)
         if timestamp
           until timestamp.nil?
-            unlocked_enqueue_delayed_items_for_timestamp(timestamp)
-            timestamp = Resque.next_delayed_timestamp(at_time)
+            handle_shutdown do
+              puts "processing #{timestamp} with #{Time.now.to_i - timestamp} seconds behind"
+              unlocked_enqueue_delayed_items_for_timestamp(timestamp)
+              timestamp = Resque.next_delayed_timestamp(at_time)
+            end
           end
         end
       end
@@ -90,6 +93,7 @@ module Resque
           # continue processing until there are no more ready items in this
           # timestamp
           break if item.nil?
+          handle_signals_with_operation
         end
       end
 
