@@ -55,7 +55,7 @@ module Resque
             rescue Errno::EAGAIN, Errno::ECONNRESET, Redis::CannotConnectError => e
               log! e.message
             end
-            #poll_sleep
+            poll_sleep
           end
 
         rescue Interrupt
