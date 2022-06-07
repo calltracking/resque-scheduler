@@ -603,8 +603,8 @@ module Resque
         if am_master
           begin
             StatsTracker.increment("ResqueScheuler.enqueue", tags: [config['class']])
-          rescue Exception => e
-           log! "Exception enqueueing: #{e.inspect}"
+          rescue e
+           log! e.inspect
           end
           log! "queueing #{config['class']} (#{name})"
           enqueue(config)
