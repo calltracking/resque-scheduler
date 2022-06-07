@@ -601,6 +601,11 @@ module Resque
 
       def enqueue_recurring(name, config)
         if am_master
+          begin
+            StatsTracker.increment("ResqueScheuler.enqueue", tags: [config['class']])
+          rescue Exception => e
+           log! "Exception enqueueing: #{e.inspect}"
+          end
           log! "queueing #{config['class']} (#{name})"
           enqueue(config)
           Resque.last_enqueued_at(name, Time.now.to_s)
