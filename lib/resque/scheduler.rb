@@ -531,7 +531,7 @@ module Resque
       def enqueue_recurring(name, config)
         if master?
           begin
-            StatsTracker.increment("ResqueScheuler.enqueue", tags: [config['class']])
+            StatsTracker.increment("ResqueScheuler.enqueue", tags: ["class_name:#{config['class']}"])
           rescue e
            log! e.inspect
           end
