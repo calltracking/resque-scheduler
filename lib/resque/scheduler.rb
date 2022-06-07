@@ -532,8 +532,8 @@ module Resque
         if master?
           begin
             StatsTracker.increment("ResqueScheuler.enqueue", tags: [config['class']])
-          rescue Exception => e
-           log! "Exception enqueueing: #{e.inspect}"
+          rescue e
+           log! e.inspect
           end
           log! "queueing #{config['class']} (#{name})"
           Resque.last_enqueued_at(name, Time.now.to_s)
