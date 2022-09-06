@@ -93,10 +93,8 @@ module Resque
         end
       end
 
-      # run with RESQUE_SCHEDULER_MASTER_LOCK_PREFIX=scheduler
       def run_scheduled_only
         procline 'Starting Scheduler'
-        ENV['RESQUE_SCHEDULER_MASTER_LOCK_PREFIX'] = 'scheduler'
 
         # trap signals
         register_signal_handlers
