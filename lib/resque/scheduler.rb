@@ -117,11 +117,11 @@ module Resque
           @th = Thread.current
 
           # Now start the scheduling part of the loop.
+          procline 'Processing Schedules'
           loop do
             begin
-              if master?
+              if master? && dynamic
                 update_schedule
-                procline 'Processing Schedules'
               end
             rescue Errno::EAGAIN, Errno::ECONNRESET, Redis::CannotConnectError => e
               log! e.message
