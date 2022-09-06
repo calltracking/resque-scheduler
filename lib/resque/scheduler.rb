@@ -109,7 +109,11 @@ module Resque
 
         # Load the schedule into rufus
         # If dynamic is set, load that schedule otherwise use normal load
-        reload_schedule!
+        if dynamic
+          reload_schedule!
+        else
+          load_schedule!
+        end
 
         begin
           @th = Thread.current
