@@ -133,10 +133,10 @@ module Resque
         Array(redis.zrange(:delayed_queue_schedule, 0, -1)).each do |item|
           key = "delayed:#{item}"
           items = redis.lrange(key, 0, -1)
-          redis.pipelined do
-            items.each { |ts_item| redis.del("timestamps:#{ts_item}") }
+          redis.pipelined do|rs|
+            items.each { |ts_item| rs.unlink("timestamps:#{ts_item}") }
           end
-          redis.del key
+          redis.unlink key
         end
 
         redis.del :delayed_queue_schedule
@@ -275,10 +275,10 @@ module Resque
 
         timestamps = redis.smembers("timestamps:#{encoded_job}")
 
-        replies = redis.pipelined do
+        replies = redis.pipelined do|rs|
           timestamps.each do |key|
-            redis.lrem(key, 0, encoded_job)
-            redis.srem("timestamps:#{encoded_job}", key)
+            rs.lrem(key, 0, encoded_job)
+            rs.srem("timestamps:#{encoded_job}", key)
           end
         end
 
