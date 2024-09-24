@@ -293,9 +293,9 @@ module Resque
           # TODO: this should be done using lua script
           if redis.llen(key).to_i == 0
             # If the list is empty, remove it.
-            redis.multi do
-              redis.del(key)
-              redis.zrem(:delayed_queue_schedule, timestamp.to_i)
+            redis.multi do|rs|
+              rs.unlink(key)
+              rs.zrem(:delayed_queue_schedule, timestamp.to_i)
             end
           else
             redis.redis.unwatch
