@@ -598,10 +598,27 @@ module Resque
 
       def enqueue_recurring(name, config)
         if am_master
+          track_recurring_enqueue(config)
           log! "queueing #{config['class']} (#{name})"
           enqueue(config)
           Resque.last_enqueued_at(name, Time.now.to_s)
         end
+      end
+
+      # Counts what the schedule fires, per job class. Host apps that define
+      # StatsTracker get the metric; everyone else gets nothing. Never let
+      # instrumentation stop a scheduled job from being queued.
+      def track_recurring_enqueue(config)
+        return if !defined?(StatsTracker)
+
+        # Misspelled since 2022. Kept as-is so existing dashboards keep
+        # resolving; renaming it is its own change, alongside them.
+        StatsTracker.increment(
+          'ResqueScheuler.enqueue',
+          tags: ["class_name:#{config['class']}"]
+        )
+      rescue => e
+        log! e.inspect
       end
 
       def app_str
