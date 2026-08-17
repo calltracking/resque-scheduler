@@ -150,10 +150,10 @@ module Resque
         Array(redis.zrange(:delayed_queue_schedule, 0, -1)).each do |item|
           key = "delayed:#{item}"
           items = redis.lrange(key, 0, -1)
-          redis.del(key, items.map { |ts_item| "timestamps:#{ts_item}" })
+          redis.unlink(key, items.map { |ts_item| "timestamps:#{ts_item}" })
         end
 
-        redis.del :delayed_queue_schedule
+        redis.unlink :delayed_queue_schedule
       end
 
       # Given an encoded item, remove it from the delayed_queue
@@ -301,7 +301,7 @@ module Resque
           if redis.llen(key).to_i == 0
             # If the list is empty, remove it.
             redis.multi do |transaction|
-              transaction.del(key)
+              transaction.unlink(key)
               transaction.zrem(:delayed_queue_schedule, timestamp.to_i)
             end
           else
