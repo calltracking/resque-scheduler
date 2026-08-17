@@ -245,11 +245,19 @@ module Resque
             args = optionizate_interval_value(config[interval_type])
             args = [args, nil, job: true] if args.is_a?(::String)
 
-            job = rufus_scheduler.send(interval_type, *args) do
-              enqueue_recurring(name, config)
+            # A schedule rufus cannot parse would otherwise take down the whole
+            # scheduler on boot, taking every other entry with it. Skip the bad
+            # entry instead and keep loading.
+            begin
+              job = rufus_scheduler.send(interval_type, *args) do
+                enqueue_recurring(name, config)
+              end
+              @scheduled_jobs[name] = job
+              interval_defined = true
+            rescue => e
+              log_error "[Bad Schedule] ignoring #{name} with: " \
+                        "#{e.message}\n#{e.backtrace.join("\n")}"
             end
-            @scheduled_jobs[name] = job
-            interval_defined = true
             break
           end
           unless interval_defined
