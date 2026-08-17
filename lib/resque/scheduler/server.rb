@@ -147,10 +147,13 @@ module Resque
           Array(args).map(&:inspect).join("\n")
         end
 
+        # Constantizing here raises for any job class the web process cannot
+        # load -- which is every class in an app that mounts resque-web
+        # separately from its workers -- and takes the delayed page down with
+        # it. Ask Resque with the name and accept a nil queue when the class
+        # is not loaded here.
         def queue_from_class_name(class_name)
-          Resque.queue_from_class(
-            Resque::Scheduler::Util.constantize(class_name)
-          )
+          Resque.queue_from_class(class_name)
         end
 
         def find_job(worker)
