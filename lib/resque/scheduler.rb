@@ -322,10 +322,16 @@ module Resque
             # Continually check that it is still the master, unless this
             # process runs the delayed loop on its own, where the batch
             # transaction is what keeps concurrent processes correct.
-            if delayed_lockless? || am_master
-              actual_batch_size = enqueue_items_in_batch_for_timestamp(timestamp,
+            actual_batch_size = if delayed_lockless? || am_master
+                                  enqueue_items_in_batch_for_timestamp(timestamp,
                                                                        batch_size)
-            end
+                                else
+                                  # Lost the master lock partway through this
+                                  # timestamp. Stop and leave the rest to
+                                  # whoever holds it now, the same way a lost
+                                  # batch transaction does.
+                                  -1
+                                end
           end
 
           count += actual_batch_size
