@@ -8,7 +8,9 @@ on:
 
 jobs:
   test:
-    continue-on-error: true
+    # Was true for every job, so nothing this workflow ran could ever fail a
+    # pull request. Only ruby head is allowed to be red.
+    continue-on-error: ${{ matrix.ruby-version == 'head' }}
     runs-on: ubuntu-latest
     services:
       redis:
