@@ -7,6 +7,7 @@ require_relative 'scheduler/locking'
 require_relative 'scheduler/logger_builder'
 require_relative 'scheduler/signal_handling'
 require_relative 'scheduler/failure_handler'
+require_relative 'scheduler/ctm_runners'
 
 module Resque
   module Scheduler
@@ -23,6 +24,7 @@ module Resque
     extend Resque::Scheduler::Locking
     extend Resque::Scheduler::Configuration
     extend Resque::Scheduler::SignalHandling
+    extend Resque::Scheduler::CtmRunners
 
     public
 
@@ -34,103 +36,6 @@ module Resque
 
       # allow user to set an additional failure handler
       attr_writer :failure_handler
-
-      # Set by run_delayed_only. See #run_delayed_only for why the delayed
-      # loop can drop the master lock.
-      attr_writer :delayed_lockless
-
-      def delayed_lockless?
-        @delayed_lockless == true
-      end
-
-      # Runs only the delayed-job loop, and runs it without the master lock
-      # (never returns).
-      #
-      # #run drives the schedule and the delayed queue from one loop in one
-      # process, so a slow pass over a large dynamic schedule holds up delayed
-      # jobs queued behind it. Splitting the two into separate processes keeps
-      # delayed throughput off the scheduler's critical path.
-      #
-      # Dropping the master lock is safe because
-      # #enqueue_items_in_batch_for_timestamp does its work inside a
-      # WATCH/MULTI on the timestamp bucket and reports a lost race by
-      # returning -1, so several processes can drain the same timestamp
-      # without enqueueing anything twice.
-      def run_delayed_only
-        procline 'Starting Delayed'
-
-        # trap signals
-        register_signal_handlers
-
-        # Quote from the resque/worker.
-        # Fix buffering so we can `rake resque:scheduler > scheduler.log` and
-        # get output from the child in there.
-        $stdout.sync = true
-        $stderr.sync = true
-
-        self.delayed_lockless = true
-
-        begin
-          @th = Thread.current
-
-          loop do
-            begin
-              handle_delayed_items
-            rescue *INTERMITTENT_ERRORS => e
-              log! e.message
-            end
-            poll_sleep
-          end
-
-        rescue Interrupt
-          log 'Exiting'
-        end
-      end
-
-      # Runs only the schedule (never returns): loads the schedule, keeps it
-      # current when dynamic, and leaves the delayed queue to
-      # #run_delayed_only. Holds the master lock, so exactly one of these
-      # enqueues recurring jobs.
-      def run_scheduled_only
-        procline 'Starting Scheduler'
-
-        # trap signals
-        register_signal_handlers
-
-        $stdout.sync = true
-        $stderr.sync = true
-
-        was_master = nil
-
-        begin
-          @th = Thread.current
-
-          loop do
-            begin
-              # Check on changes to master/child
-              @am_master = master?
-              if am_master != was_master
-                procline am_master ? 'Master scheduler' : 'Child scheduler'
-
-                # Load schedule because changed
-                reload_schedule!
-              end
-
-              update_schedule if am_master && dynamic
-              was_master = am_master
-            rescue *INTERMITTENT_ERRORS => e
-              log! e.message
-              release_master_lock
-            end
-            poll_sleep
-          end
-
-        rescue Interrupt
-          log 'Exiting'
-        end
-      ensure
-        release_master_lock
-      end
 
       # Schedule all jobs and continually look for delayed jobs (never returns)
       def run
@@ -353,8 +258,7 @@ module Resque
 
       def enqueue_items_in_batch_for_timestamp(timestamp, batch_size)
         timestamp_bucket_key = timestamp_key(timestamp)
-
-        encoded_jobs_to_requeue = Resque.redis.lrange(timestamp_bucket_key, 0, batch_size - 1)
+        encoded_jobs_to_requeue = []
 
         # Watch is used to ensure that the timestamp bucket we are operating on
         # is not altered by any other clients between the watch call and when we call exec
@@ -362,7 +266,15 @@ module Resque
         # as that will indicate if the entire transaction was aborted or not. Though we should
         # be safe as our ltrim is inside the multi block and therefore also would have been
         # aborted. So nothing would have been queued, but also nothing lost from the bucket.
+        #
+        # The batch is read inside the watched section on purpose. Reading it
+        # first leaves a window where another process can drain the bucket
+        # before this one starts watching: the transaction then commits against
+        # a stale batch, enqueueing those jobs a second time and trimming
+        # entries it never enqueued.
         watch_result = Resque.redis.watch(timestamp_bucket_key) do
+          encoded_jobs_to_requeue = Resque.redis.lrange(timestamp_bucket_key, 0, batch_size - 1)
+
           Resque.redis.multi do |pipeline|
             encoded_jobs_to_requeue.each do |encoded_job|
               pipeline.srem("timestamps:#{encoded_job}", timestamp_bucket_key)

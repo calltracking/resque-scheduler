@@ -51,6 +51,28 @@ context 'CTM patches' do
     Object.new.extend(Resque::Scheduler::Server::HelperMethods)
   end
 
+  # Runs the given block the next time anything WATCHes, i.e. in the window
+  # between a batch being read and its transaction committing. Standing in for a
+  # second run_delayed_only process lets the race be exercised in one thread,
+  # with no sleeps and no ordering luck.
+  module RaceHook
+    class << self
+      attr_accessor :on_next_watch
+    end
+
+    def watch(*args, &block)
+      interloper = RaceHook.on_next_watch
+      RaceHook.on_next_watch = nil
+      interloper&.call
+      super
+    end
+  end
+
+  def before_the_next_watch(&block)
+    Resque.redis.redis.singleton_class.prepend(RaceHook)
+    RaceHook.on_next_watch = block
+  end
+
   test 'the delayed loop enqueues without the master lock when lockless' do
     timestamp = delayed_items_without_the_lock
     Resque::Scheduler.delayed_lockless = true
@@ -83,6 +105,47 @@ context 'CTM patches' do
     Resque::Scheduler.enqueue_delayed_items_for_timestamp(timestamp)
 
     assert_equal(2, Resque.delayed_timestamp_size(timestamp))
+  end
+
+  test 'a lockless batch does not requeue jobs another process already drained' do
+    Resque::Scheduler.delayed_lockless = true
+    timestamp = Time.now + 60
+    Resque.enqueue_at(timestamp, SomeIvarJob, 'a')
+    Resque.enqueue_at(timestamp, SomeIvarJob, 'b')
+    queue = Resque.queue_from_class(SomeIvarJob)
+
+    before_the_next_watch do
+      # What a second delayed process does: enqueue both jobs and empty the bucket.
+      Resque.delayed_timestamp_peek(timestamp, 0, 2).each do |job|
+        Resque::Job.create(queue, job['class'], *job['args'])
+      end
+      Resque.redis.ltrim("delayed:#{timestamp.to_i}", 2, -1)
+    end
+
+    Resque::Scheduler.enqueue_items_in_batch_for_timestamp(timestamp, 100)
+
+    assert_equal(2, Resque.size(queue))
+  end
+
+  test 'a lockless batch does not discard a job that arrived while it worked' do
+    Resque::Scheduler.delayed_lockless = true
+    timestamp = Time.now + 60
+    Resque.enqueue_at(timestamp, SomeIvarJob, 'a')
+    queue = Resque.queue_from_class(SomeIvarJob)
+    key = "delayed:#{timestamp.to_i}"
+
+    before_the_next_watch do
+      # A second delayed process takes 'a', and a fresh 'c' lands in the bucket
+      # behind it. An LTRIM against the stale read would drop 'c' unqueued.
+      Resque::Job.create(queue, 'SomeIvarJob', 'a')
+      Resque.redis.ltrim(key, 1, -1)
+      Resque.enqueue_at(timestamp, SomeIvarJob, 'c')
+    end
+
+    Resque::Scheduler.enqueue_items_in_batch_for_timestamp(timestamp, 100)
+
+    assert(Resque.peek(queue, 0, 10).map { |job| job['args'] }.include?(['c']),
+           'the job that arrived mid-batch was dropped without being queued')
   end
 
   test 'a schedule rufus cannot parse does not take down the load' do
