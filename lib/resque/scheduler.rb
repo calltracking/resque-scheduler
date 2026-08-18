@@ -150,18 +150,8 @@ module Resque
             args = optionizate_interval_value(config[interval_type])
             args = [args, nil, job: true] if args.is_a?(::String)
 
-            # A schedule rufus cannot parse would otherwise take down the whole
-            # scheduler on boot, taking every other entry with it. Skip the bad
-            # entry instead and keep loading.
-            begin
-              job = rufus_scheduler.send(interval_type, *args) do
-                enqueue_recurring(name, config)
-              end
-              @scheduled_jobs[name] = job
-              interval_defined = true
-            rescue => e
-              log_error "[Bad Schedule] ignoring #{name} with: " \
-                        "#{e.message}\n#{e.backtrace.join("\n")}"
+            interval_defined = schedule_job_safely(name, interval_type, args) do
+              enqueue_recurring(name, config)
             end
             break
           end
@@ -227,16 +217,7 @@ module Resque
             # Continually check that it is still the master, unless this
             # process runs the delayed loop on its own, where the batch
             # transaction is what keeps concurrent processes correct.
-            actual_batch_size = if delayed_lockless? || am_master
-                                  enqueue_items_in_batch_for_timestamp(timestamp,
-                                                                       batch_size)
-                                else
-                                  # Lost the master lock partway through this
-                                  # timestamp. Stop and leave the rest to
-                                  # whoever holds it now, the same way a lost
-                                  # batch transaction does.
-                                  -1
-                                end
+            actual_batch_size = enqueue_batch_or_stop(timestamp, batch_size)
           end
 
           count += actual_batch_size
@@ -521,22 +502,6 @@ module Resque
           enqueue(config)
           Resque.last_enqueued_at(name, Time.now.to_s)
         end
-      end
-
-      # Counts what the schedule fires, per job class. Host apps that define
-      # StatsTracker get the metric; everyone else gets nothing. Never let
-      # instrumentation stop a scheduled job from being queued.
-      def track_recurring_enqueue(config)
-        return if !defined?(StatsTracker)
-
-        # Misspelled since 2022. Kept as-is so existing dashboards keep
-        # resolving; renaming it is its own change, alongside them.
-        StatsTracker.increment(
-          'ResqueScheuler.enqueue',
-          tags: ["class_name:#{config['class']}"]
-        )
-      rescue => e
-        log! e.inspect
       end
 
       def app_str

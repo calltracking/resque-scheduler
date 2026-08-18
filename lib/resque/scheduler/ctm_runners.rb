@@ -103,6 +103,45 @@ module Resque
       ensure
         release_master_lock
       end
+
+      # Runs one batch unless this process has no business doing so: the delayed
+      # loop may be running lockless (see #run_delayed_only), and otherwise the
+      # master lock decides. -1 means stop, the same value a lost batch
+      # transaction returns.
+      def enqueue_batch_or_stop(timestamp, batch_size)
+        return -1 if !delayed_lockless? && !am_master
+
+        enqueue_items_in_batch_for_timestamp(timestamp, batch_size)
+      end
+
+      # Schedules one entry with rufus and records it. A schedule rufus cannot
+      # parse would otherwise take down the whole scheduler on boot, taking
+      # every other entry with it. Returns whether the entry was scheduled.
+      def schedule_job_safely(name, interval_type, args, &block)
+        @scheduled_jobs[name] = rufus_scheduler.send(interval_type, *args, &block)
+        true
+      rescue => e
+        log_error "[Bad Schedule] ignoring #{name} with: " \
+                  "#{e.message}\n#{e.backtrace.join("\n")}"
+        false
+      end
+
+      # Counts what the schedule fires, per job class. Host apps that define
+      # StatsTracker get the metric; everyone else gets nothing. Never let
+      # instrumentation stop a scheduled job from being queued.
+      #
+      # The metric name has been misspelled since 2022. Kept as-is so existing
+      # dashboards keep resolving; renaming it is its own change, alongside them.
+      def track_recurring_enqueue(config)
+        return if !defined?(StatsTracker)
+
+        StatsTracker.increment(
+          'ResqueScheuler.enqueue',
+          tags: ["class_name:#{config['class']}"]
+        )
+      rescue => e
+        log! e.inspect
+      end
     end
   end
 end
