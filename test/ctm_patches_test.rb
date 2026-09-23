@@ -177,6 +177,20 @@ context 'CTM patches' do
                  delayed_page_helper.queue_from_class_name('SomeIvarJob').to_s)
   end
 
+  test 'a standby callback neither queues a deleted schedule nor acquires ownership' do
+    Resque::Scheduler.send(:instance_variable_set, :@am_master, false)
+    Resque.set_schedule('some_job',
+                        'cron' => '0 0 1 1 *', 'class' => 'SomeIvarJob', 'persist' => true)
+    Resque::Scheduler.load_schedule!
+    stale_job = Resque::Scheduler.scheduled_jobs.fetch('some_job')
+    Resque.remove_schedule('some_job')
+
+    stale_job.call
+
+    assert_equal(0, Resque.size(Resque.queue_from_class(SomeIvarJob)))
+    assert_nil(Resque.redis.get(Resque::Scheduler.master_lock.key))
+  end
+
   test 'a fired schedule does not enqueue after another scheduler takes ownership' do
     lock = Resque::Scheduler.master_lock
     lock.acquire!

@@ -496,7 +496,7 @@ module Resque
       private
 
       def enqueue_recurring(name, config)
-        if master?
+        if am_master && master?
           track_recurring_enqueue(config)
           log! "queueing #{config['class']} (#{name})"
           enqueue(config)
