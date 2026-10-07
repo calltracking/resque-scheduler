@@ -2,7 +2,7 @@
 source 'https://rubygems.org'
 
 # multi_json on Ruby 3.0/3.1 passes options positionally, which JSON 3 rejects.
-gem 'json', '< 3'
+gem 'json', '< 4'
 
 case resque_version = ENV.fetch('RESQUE', 'master')
 when 'master'
